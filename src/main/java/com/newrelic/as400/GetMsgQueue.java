@@ -32,6 +32,7 @@ import java.nio.file.Files;
 
 import com.ibm.as400.access.AS400;
 import com.ibm.as400.access.AS400SecurityException;
+import com.ibm.as400.access.AS400Exception;
 import com.ibm.as400.access.ErrorCompletingRequestException;
 import com.ibm.as400.access.MessageQueue;
 import com.ibm.as400.access.ObjectDoesNotExistException;
@@ -40,7 +41,8 @@ import com.ibm.as400.access.QueuedMessage;
 public class GetMsgQueue {
 
 	@SuppressWarnings("rawtypes")
-	public static void main(String[] args) throws AS400SecurityException, ErrorCompletingRequestException, InterruptedException, IOException, ObjectDoesNotExistException {
+	public static void main(String[] args) throws AS400SecurityException, ErrorCompletingRequestException,
+			InterruptedException, IOException, ObjectDoesNotExistException {
 		String strInstance = System.getenv("INSTANCE");
 		String strAs400 = System.getenv("AS400HOST");
 		String strQueue = System.getenv("MSGQUEUE");
@@ -51,115 +53,81 @@ public class GetMsgQueue {
 		String strNrProtoVersion = "1";
 		String strNrIntVersion = "0.1.0";
 		String strJSONMetrics = "";
-		String strJSONHeader = ("{" + "\"name\":" + '"' + strNrName + '"' + "," + "\"protocol_version\":" + '"' + strNrProtoVersion + '"' + "," + "\"integration_version\":" + '"' + strNrIntVersion + '"' + "," + "\"metrics\":" + "[");
+		String strJSONHeader = ("{" + "\"name\":" + '"' + strNrName + '"' + "," + "\"protocol_version\":" + '"'
+				+ strNrProtoVersion + '"' + "," + "\"integration_version\":" + '"' + strNrIntVersion + '"' + ","
+				+ "\"metrics\":" + "[");
 		String strJSONFooter = ("]," + "\"inventory\":" + "{" + "}," + "\"events\":" + "[" + "]" + "}");
 		boolean bFirstRun = true;
 		String strNrEventSummary = "AS400 message queue messages";
 		AS400 as400 = new AS400(strAs400, strUser, strPass);
-//      System.out.println(as400);
-//  ----------------------------------------------------------------------
-//      Check and see if this is our first run.  If it is not, there will be a checkpoint file
-//      containing the message key array in which we need to set our read point.
-//  ----------------------------------------------------------------------
+		try {
+			as400.setGuiAvailable(false); // disable any attempt to use UI prompts
+		} catch (Exception exception) {
+			System.out.println(exception);
+			System.exit(1);
+		}
+		// System.out.println(as400);
+		// ----------------------------------------------------------------------
+		// Check and see if this is our first run. If it is not, there will be a
+		// checkpoint file
+		// containing the message key array in which we need to set our read point.
+		// ----------------------------------------------------------------------
 		File chkPoint = new File(strInstance);
 		if (chkPoint.exists()) {
 			bFirstRun = false;
-//  ----------------------------------------------------------------------
-//      Need to put the code in to read the byte array from the checkpoint file and set
-//      mqueue.setUserStartingMessageKey to the read array.
-//
-//      If bFirstRun is true, we will read in the NEWEST record and start our read
-//      from the last message.
-//  ----------------------------------------------------------------------
+			// ----------------------------------------------------------------------
+			// Need to put the code in to read the byte array from the checkpoint file and
+			// set
+			// mqueue.setUserStartingMessageKey to the read array.
+			//
+			// If bFirstRun is true, we will read in the NEWEST record and start our read
+			// from the last message.
+			// ----------------------------------------------------------------------
 		}
 		MessageQueue mqueue = new MessageQueue(as400, strQueue);
-//  ----------------------------------------------------------------------
-//      If the is our first run, start at NEWEST, otherwise start at msgKey
-//      loaded from checkpoint file.
-//  ----------------------------------------------------------------------
+		// ----------------------------------------------------------------------
+		// If the is our first run, start at NEWEST, otherwise start at msgKey
+		// loaded from checkpoint file.
+		// ----------------------------------------------------------------------
+		Enumeration enuma;
 		if (bFirstRun) {
 			mqueue.setUserStartingMessageKey(MessageQueue.NEWEST);
 		} else {
 			byte[] byteStartKey = Files.readAllBytes(new File(strInstance).toPath());
 			mqueue.setUserStartingMessageKey(byteStartKey);
 		}
-		Enumeration enuma = mqueue.getMessages();
+		try {
+			enuma = mqueue.getMessages();
+		} catch (AS400Exception exception) { // Reset to newest when QSYSOPR is cleared i.e. key not found
+			String messageID = exception.getAS400Message().getID();
+			if (messageID.equals("CPF2410")) {
+				mqueue.setUserStartingMessageKey(MessageQueue.NEWEST);
+				enuma = mqueue.getMessages();
+				bFirstRun = true;
+			} else {
+				throw exception;
+			}
+		} catch (ArrayIndexOutOfBoundsException exception) {
+			mqueue.setUserStartingMessageKey(MessageQueue.NEWEST);
+			enuma = mqueue.getMessages();
+			bFirstRun = true;
+
+		}
 		// System.out.println("Only one element... ");
 		while (enuma.hasMoreElements()) {
 			QueuedMessage qMsg = (QueuedMessage) enuma.nextElement();
 			byte byteMsgKey[] = qMsg.getKey();
 			qMsg.getDate();
 			if (bFirstRun == true) {
-				strJSONMetrics = strJSONMetrics +
-						"{" +
-							"\"event_type\":" +
-							'"' +
-							strNrEventType +
-							'"' +
-							"," +
-							"\"summary\":" +
-							'"' +
-							strNrEventSummary +
-							'"' +
-							"," +
-							"\"host\":" +
-							'"' +
-							strAs400 +
-							'"' +
-							"," +
-							"\"queue\":" +
-							'"' +
-							strQueue +
-							'"' +
-							"," +
-							"\"messageID\":" +
-							'"' +
-							qMsg.getID() +
-							'"' +
-							"," +
-							"\"job\":" +
-							'"' +
-							qMsg.getFromJobName() +
-							'"' +
-							"," +
-							"\"jobNumber\":" +
-							'"' +
-							qMsg.getFromJobNumber() +
-							'"' +
-							"," +
-							"\"type\":" +
-							'"' +
-							qMsg.getType() +
-							'"' +
-							"," +
-							"\"program\":" +
-							'"' +
-							qMsg.getFromProgram() +
-							'"' +
-							"," +
-							"\"severity\":" +
-							qMsg.getSeverity() +
-							"," +
-							"\"replyStatus\":" +
-							'"' +
-							qMsg.getReplyStatus() +
-							'"' +
-							"," +
-							"\"user\":" +
-							'"' +
-							qMsg.getUser() +
-							'"' +
-							"," +
-							"\"message\":" +
-							'"' +
-							qMsg.getText() +
-							'"' +
-							"," +
-							"\"messageHelp\":" +
-							'"' +
-							qMsg.getMessageHelp() +
-							'"' +
-							"},";
+				strJSONMetrics = strJSONMetrics + "{" + "\"event_type\":" + '"' + strNrEventType + '"' + ","
+						+ "\"summary\":" + '"' + strNrEventSummary + '"' + "," + "\"host\":" + '"' + strAs400 + '"'
+						+ "," + "\"queue\":" + '"' + strQueue + '"' + "," + "\"messageID\":" + '"' + qMsg.getID() + '"'
+						+ "," + "\"job\":" + '"' + qMsg.getFromJobName() + '"' + "," + "\"jobNumber\":" + '"'
+						+ qMsg.getFromJobNumber() + '"' + "," + "\"type\":" + '"' + qMsg.getType() + '"' + ","
+						+ "\"program\":" + '"' + qMsg.getFromProgram() + '"' + "," + "\"severity\":"
+						+ qMsg.getSeverity() + "," + "\"replyStatus\":" + '"' + qMsg.getReplyStatus() + '"' + ","
+						+ "\"user\":" + '"' + qMsg.getUser() + '"' + "," + "\"message\":" + '"' + qMsg.getText() + '"'
+						+ "," + "\"messageHelp\":" + '"' + qMsg.getMessageHelp() + '"' + "},";
 				OutputStream byteStream = new FileOutputStream(strInstance);
 				for (byte bKey : byteMsgKey) {
 					byteStream.write(bKey);
@@ -169,7 +137,9 @@ public class GetMsgQueue {
 				bFirstRun = true;
 			}
 		}
-		strJSONMetrics = strJSONMetrics.substring(0, strJSONMetrics.length() - 1);
-		System.out.println(strJSONHeader + strJSONMetrics + strJSONFooter);
+		if (strJSONMetrics.length() > 0) {												//check to see if we actually have any results
+			strJSONMetrics = strJSONMetrics.substring(0, strJSONMetrics.length() - 1);
+			System.out.println(strJSONHeader + strJSONMetrics + strJSONFooter);
+		} 
 	}
 }
